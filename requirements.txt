@@ -1,0 +1,3 @@
+# GTK, PyGObject, Cairo, libsecret and libdbusmenu require system packages.
+Pillow>=10
+requests>=2.31
