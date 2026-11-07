@@ -4,6 +4,8 @@
 
 A compact Linux screenshot tool by **thegoatler**, inspired by Lightshot.
 Select an area, annotate it, then copy, save, or share it through your Immich server.
+This app is 100% vibe coded, I just wanted a quick replacement, flameshot is fine but
+I really liked lightshot better overall.
 
 ![Editor preview](preview.png)
 
