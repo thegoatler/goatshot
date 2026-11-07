@@ -55,8 +55,13 @@ after the capture, so the toolbars do not appear in the screenshot.
 ## Settings and updates
 
 Right-click the tray icon and choose **Settings**. Configure drawing color,
-thickness, background dimming, save directory, copying after saving, optional
+thickness, background dimming, save directory, copying after saving, app icon, optional
 startup at login, and Immich sharing. Left-click the icon takes a screenshot.
+
+The **App icon** dropdown offers **Neon** (default), **Aperture**, and **Mountain
+Goat**. Save to apply the choice to the tray and app windows immediately. The
+choice persists across launches and reinstalls and also updates the desktop
+launcher icon; desktop shells may refresh launcher caches separately.
 
 Preferences are in `$XDG_CONFIG_HOME/goatshot/settings.json` (normally
 `~/.config/goatshot/settings.json`). Startup at login starts only the tray.

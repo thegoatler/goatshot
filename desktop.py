@@ -1,7 +1,10 @@
 """KDE tray integration and persistent preferences for Goatshot."""
 import json
 import math
+from functools import lru_cache
+from PIL import Image
 from pathlib import Path
+from branding import ICONS, icon_path, update_desktop_icon
 import gi
 gi.require_version('Gtk', '3.0')
 gi.require_version('Dbusmenu', '0.4')
@@ -9,7 +12,7 @@ from gi.repository import Gtk, Gdk, Gio, GLib, Dbusmenu
 
 DEFAULTS = {'color': [1.0, 0.0, 0.0], 'width': 3, 'dim': 0.48,
             'save_folder': str(Path.home()/'Pictures'), 'copy_after_save': False,
-            'immich_url': '', 'link_expiry_days': 0}
+            'immich_url': '', 'link_expiry_days': 0, 'icon': 'neon'}
 CONFIG = Path(GLib.get_user_config_dir())/'goatshot/settings.json'
 AUTOSTART = Path(GLib.get_user_config_dir())/'autostart/goatshot.desktop'
 LAUNCHER = Path.home()/'.local/bin/goatshot'
@@ -32,6 +35,8 @@ def validated(values):
     if isinstance(url, str): result['immich_url'] = url
     days = values.get('link_expiry_days')
     if type(days) is int and 0 <= days <= 365: result['link_expiry_days'] = days
+    if isinstance(values.get('icon'), str) and values['icon'] in ICONS:
+        result['icon'] = values['icon']
     return result
 
 
@@ -74,6 +79,10 @@ class SettingsWindow(Gtk.ApplicationWindow):
             grid.attach(Gtk.Label(label=label, xalign=0), 0, n, 1, 1)
             control.set_hexpand(True); grid.attach(control, 1, n, 1, 1)
         prefs = app.settings
+        self.icon_choice = Gtk.ComboBoxText()
+        for key, (label, filename) in ICONS.items(): self.icon_choice.append(key, label)
+        self.icon_choice.set_active_id(prefs['icon'])
+        row(8, 'App icon', self.icon_choice)
         self.color = Gtk.ColorButton()
         self.color.set_rgba(Gdk.RGBA(*prefs['color'], 1))
         row(0, 'Default drawing color', self.color)
@@ -120,7 +129,8 @@ class SettingsWindow(Gtk.ApplicationWindow):
                     'dim': self.dim.get_value()/100, 'save_folder': self.folder.get_filename() or self.app.settings['save_folder'],
                     'copy_after_save': self.copy.get_active(),
                     'immich_url': self.immich_url.get_text().strip(),
-                    'link_expiry_days': self.expiry.get_value_as_int()}
+                    'link_expiry_days': self.expiry.get_value_as_int(),
+                    'icon': self.icon_choice.get_active_id() or 'neon'}
         try:
             from uploads import server_url, store_key
             if settings['immich_url']:
@@ -134,6 +144,11 @@ class SettingsWindow(Gtk.ApplicationWindow):
         except Exception as e:
             self.app.error('Could not save settings', str(e), self); return
         self.app.settings = validated(settings)
+        try:
+            self.app.refresh_icon()
+        except Exception as e:
+            self.app.error('Settings saved, but the icon could not refresh', str(e), self)
+            return
         self.destroy()
 
 
@@ -160,6 +175,20 @@ SNI_XML = '''<node><interface name="org.kde.StatusNotifierItem">
 <method name="Scroll"><arg type="i" direction="in"/><arg type="s" direction="in"/></method>
 <signal name="NewIcon"/><signal name="NewToolTip"/><signal name="NewStatus"><arg type="s"/></signal>
 </interface></node>'''
+
+
+@lru_cache(maxsize=3)
+def tray_pixmaps(icon_name='neon'):
+    # StatusNotifierItem requires network-order ARGB bytes, not RGBA or native Cairo pixels.
+    result = []
+    with Image.open(icon_path(icon_name)) as original:
+        source = original.convert('RGBA')
+        for size in (22, 32, 48, 64):
+            rgba = source.resize((size, size), Image.Resampling.LANCZOS).tobytes()
+            argb = bytearray(len(rgba))
+            argb[0::4], argb[1::4], argb[2::4], argb[3::4] = rgba[3::4], rgba[0::4], rgba[1::4], rgba[2::4]
+            result.append((size, size, bytes(argb)))
+    return result
 
 
 class Tray:
@@ -195,18 +224,23 @@ class Tray:
 
     @staticmethod
     def registered(bus, result):
-        try: bus.call_finish(result)
+        try:
+            bus.call_finish(result)
+            # Force hosts to refresh previously cached icons after an app upgrade.
+            bus.emit_signal(None, '/StatusNotifierItem', 'org.kde.StatusNotifierItem', 'NewIcon', None)
+            bus.emit_signal(None, '/StatusNotifierItem', 'org.kde.StatusNotifierItem', 'NewToolTip', None)
         except GLib.Error as e: print('Could not register Goatshot tray icon:', e, file=__import__('sys').stderr)
 
     def property(self, connection, sender, path, interface, name):
+        selected = self.app.settings.get('icon', 'neon')
         values = {'Category': ('s', 'ApplicationStatus'), 'Id': ('s', 'goatshot'),
                   'Title': ('s', 'Goatshot'), 'Status': ('s', 'Active'), 'WindowId': ('i', 0),
-                  'IconName': ('s', str(Path(__file__).resolve().parent/'assets/goatshot.png')),
-                  'IconThemePath': ('s', str(Path(__file__).resolve().parent/'assets')),
-                  'IconPixmap': ('a(iiay)', []), 'OverlayIconName': ('s', ''),
+                  'IconName': ('s', ''),
+                  'IconThemePath': ('s', ''),
+                  'IconPixmap': ('a(iiay)', tray_pixmaps(selected)), 'OverlayIconName': ('s', ''),
                   'OverlayIconPixmap': ('a(iiay)', []), 'AttentionIconName': ('s', ''),
                   'AttentionIconPixmap': ('a(iiay)', []), 'AttentionMovieName': ('s', ''),
-                  'ToolTip': ('(sa(iiay)ss)', ('goatshot', [], 'Goatshot', 'Take a screenshot or open settings')),
+                  'ToolTip': ('(sa(iiay)ss)', ('', tray_pixmaps(selected), 'Goatshot', 'Take a screenshot or open settings')),
                   'ItemIsMenu': ('b', False), 'Menu': ('o', '/MenuBar')}
         if name in values: return GLib.Variant(*values[name])
         return None
@@ -215,6 +249,10 @@ class Tray:
         invocation.return_value(None)
         if method == 'Activate': self.menu_action(None, 0, self.app.activate)
         elif method in ('SecondaryActivate', 'ContextMenu'): self.menu_action(None, 0, self.app.show_settings)
+
+    def refresh(self):
+        for signal in ('NewIcon', 'NewToolTip'):
+            self.bus.emit_signal(None, '/StatusNotifierItem', 'org.kde.StatusNotifierItem', signal, None)
 
     def close(self):
         Gio.bus_unwatch_name(self.watch_id)

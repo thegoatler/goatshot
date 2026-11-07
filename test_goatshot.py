@@ -174,9 +174,41 @@ class DesktopTests(unittest.TestCase):
         from gi.repository import Gio
         iface = Gio.DBusNodeInfo.new_for_xml(SNI_XML).interfaces[0]
         for prop in iface.properties:
-            value = Tray.property(None, None, None, None, None, prop.name)
+            value = Tray.property(SimpleNamespace(app=SimpleNamespace(settings={'icon':'neon'})), None, None, None, None, prop.name)
             self.assertIsNotNone(value, prop.name)
             self.assertEqual(value.get_type_string(), prop.signature, prop.name)
+
+    def test_tray_embeds_neon_pixels_in_argb_order(self):
+        from desktop import Tray, tray_pixmaps
+        from PIL import Image
+        pixmaps = tray_pixmaps()
+        self.assertEqual([w for w,h,data in pixmaps], [22,32,48,64])
+        source = Image.open(Path(__file__).parent/'assets/goatshot.png').convert('RGBA')
+        for width, height, data in pixmaps:
+            self.assertEqual(len(data), width*height*4)
+            expected = source.resize((width,height), Image.Resampling.LANCZOS)
+            rgba = expected.getpixel((width//2,height//2))
+            offset = ((height//2)*width+width//2)*4
+            self.assertEqual(tuple(data[offset:offset+4]), (rgba[3],*rgba[:3]))
+        self.assertEqual(Tray.property(SimpleNamespace(app=SimpleNamespace(settings={'icon':'neon'})),None,None,None,None,'IconName').unpack(), '')
+        self.assertTrue(Tray.property(SimpleNamespace(app=SimpleNamespace(settings={'icon':'neon'})),None,None,None,None,'IconPixmap').unpack())
+
+    def test_icon_choice_persists_and_invalid_values_fall_back(self):
+        from desktop import validated, save_settings, load_settings
+        from branding import ICONS
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp)/'settings.json'
+            for name in ICONS:
+                save_settings({'icon': name}, path)
+                self.assertEqual(load_settings(path)['icon'], name)
+            for invalid in ['../outside', [], None]:
+                self.assertEqual(validated({'icon':invalid})['icon'], 'neon')
+
+    def test_tray_choices_have_distinct_pixel_data(self):
+        from desktop import tray_pixmaps
+        from branding import ICONS
+        data = [tray_pixmaps(name)[1][2] for name in ICONS]
+        self.assertEqual(len(set(data)), len(ICONS))
 
     def test_command_line_settings_and_background_do_not_capture(self):
         fake = SimpleNamespace(show_settings=Mock(), activate=Mock(), quit=Mock())
@@ -195,7 +227,14 @@ class InstallTests(unittest.TestCase):
         from install import install
         with tempfile.TemporaryDirectory(prefix='goatshot install ') as tmp:
             home = Path(tmp)
+            legacy = home/'.local/share/icons/hicolor/scalable/apps/goatshot.svg'
+            legacy.parent.mkdir(parents=True)
+            legacy.write_text('<svg/>')
             app = install(home)
+            self.assertFalse(legacy.exists())
+            self.assertEqual((home/'.local/state/goatshot/legacy-goatshot.svg').read_text(), '<svg/>')
+            self.assertEqual((home/'.local/share/icons/hicolor/256x256/apps/goatshot.png').read_bytes(),
+                             (app/'assets/goatshot.png').read_bytes())
             self.assertTrue((app/'assets/goatshot.png').is_file())
             result = subprocess.run([str(home/'.local/bin/goatshot'), '--help'], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -203,5 +242,13 @@ class InstallTests(unittest.TestCase):
             desktop = home/'.local/share/applications/io.github.isaac.Snaplight.desktop'
             self.assertIn('Name=Goatshot', desktop.read_text())
             self.assertFalse((home/'.config/goatshot/settings.json').exists())
+            from branding import ICONS
+            for label, filename in ICONS.values(): self.assertTrue((app/'assets'/filename).exists())
+            config = home/'.config/goatshot/settings.json'
+            config.parent.mkdir(parents=True)
+            config.write_text('{"icon":"mountain"}')
+            install(home)
+            self.assertIn('goatshot-mountain.png', desktop.read_text())
+            self.assertEqual(config.read_text(), '{"icon":"mountain"}')
 
 if __name__ == '__main__': unittest.main()

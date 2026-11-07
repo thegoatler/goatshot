@@ -18,6 +18,7 @@ gi.require_version('GdkPixbuf', '2.0')
 from gi.repository import Gtk, Gdk, GdkPixbuf, Gio, GLib
 
 from desktop import Tray, SettingsWindow, load_settings
+from branding import icon_path, update_desktop_icon
 
 APP_ID = 'io.github.isaac.Snaplight'  # Stable installed application identity.
 
@@ -615,10 +616,19 @@ class Goatshot(Gtk.Application):
         Gtk.Application.do_startup(self)
         self.hold()
         GLib.set_application_name('Goatshot')
+        self.refresh_icon()
         try:
             self.tray = Tray(self)
         except Exception as e:
             print('Could not create Goatshot tray icon:', e, file=sys.stderr)
+
+    def refresh_icon(self):
+        selected = self.settings.get('icon', 'neon')
+        pixbuf = load_image(str(icon_path(selected)))
+        Gtk.Window.set_default_icon(pixbuf)
+        for window in self.get_windows(): window.set_icon(pixbuf)
+        update_desktop_icon(selected)
+        if self.tray: self.tray.refresh()
 
     def do_shutdown(self):
         if self.tray: self.tray.close()
