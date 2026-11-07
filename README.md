@@ -34,7 +34,7 @@ corresponding system packages; `pip install -r requirements.txt` alone does not
 provide GTK or the desktop integration libraries.
 
 ```sh
-git clone https://github.com/isaac-mill3r/goatshot.git
+git clone https://github.com/thegoatler/goatshot.git
 cd goatshot
 python3 install.py
 ~/.local/bin/goatshot
